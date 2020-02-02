@@ -70,7 +70,6 @@ void client()
 		return;
 	}
 
-
 	while (buffer[0] == 'c' && run)
 	{
 		if( send(clientSocket , message , strlen(message) , 0) < 0)
@@ -82,6 +81,12 @@ void client()
 		{
 			printf("Receive failed\n");
 		}
+	}
+
+	if(pthread_join(thread, NULL)) {
+
+		fprintf(stderr, "Error joining thread\n");
+		return;
 	}
 
 	{
@@ -100,6 +105,49 @@ void client()
 	//printf("Data received: %s\n",buffer);
 	if (buffer[0] == 'd')
 		std::cout << buffer << std::endl;
+
+	message[0] = 'u';
+
+	if(pthread_create(&thread, NULL, timer_thread, NULL)) {
+
+		fprintf(stderr, "Error creating thread\n");
+		return;
+	}
+	while (buffer[0] == 'f' && run)
+	{
+		if( send(clientSocket , message , strlen(message) , 0) < 0)
+		{
+			printf("Send failed\n");
+		}
+		//Read the message from the server into the buffer
+		if(recv(clientSocket, buffer, 34000, 0) < 0)
+		{
+			printf("Receive failed\n");
+		}
+	}
+
+	if(pthread_join(thread, NULL)) {
+
+		fprintf(stderr, "Error joining thread\n");
+		return;
+	}
+
+	{
+		message[0] = 'e';
+		if( send(clientSocket , message , strlen(message) , 0) < 0)
+		{
+			printf("Send failed\n");
+		}
+		//Read the message from the server into the buffer
+		if(recv(clientSocket, buffer, 34000, 0) < 0)
+		{
+			printf("Receive failed\n");
+		}
+	}
+
+	if (buffer[0] == 'd')
+		std::cout << buffer << std::endl;
+
 	close(clientSocket);
 }
 int main(){
