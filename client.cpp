@@ -234,70 +234,77 @@ void client(std::string config_file)
 	std::cout << config.get_protocol() << "\n" << config.get_ip() << "\n" << config.get_port() << "\n" << config.get_timeout() << std::endl;
 	std::cout << config.get_download_time() << "\n" << config.get_upload_time() << std::endl;
 
-	char message[BUF_SIZE];
-	char buffer[BUF_SIZE];
-	tcp_client client(config.get_ip(), config.get_port());
-	client.connect();
-
-	std::cout << "Try to upload" << std::endl;
-	memset(message, 'a', sizeof (message));
-	message[0] = 'u';
-
-	/* this variable is our reference to the second thread */
-	pthread_t thread;
-
-	size_t upload_time = config.get_upload_time();
-	/* create a second thread which executes inc_x(&x) */
-	if(pthread_create(&thread, NULL, timer_thread, &upload_time)) {
-
-		fprintf(stderr, "Error creating thread\n");
-		return;
-	}
-
-	size_t total_upload = 0;
-	while (run)
+	if (config.get_protocol() == client_config::TCP)
 	{
-		total_upload += client.send(message, BUF_SIZE);
-		client.receive(buffer, 1);
+		char message[BUF_SIZE];
+		char buffer[BUF_SIZE];
+		tcp_client client(config.get_ip(), config.get_port());
+		client.connect();
+
+		std::cout << "Try to upload" << std::endl;
+		memset(message, 'a', sizeof (message));
+		message[0] = 'u';
+
+		/* this variable is our reference to the second thread */
+		pthread_t thread;
+
+		size_t upload_time = config.get_upload_time();
+		/* create a second thread which executes inc_x(&x) */
+		if(pthread_create(&thread, NULL, timer_thread, &upload_time)) {
+
+			fprintf(stderr, "Error creating thread\n");
+			return;
+		}
+
+		size_t total_upload = 0;
+		while (run)
+		{
+			total_upload += client.send(message, BUF_SIZE);
+			client.receive(buffer, 1);
+		}
+
+		if(pthread_join(thread, NULL)) {
+
+			fprintf(stderr, "Error joining thread\n");
+			return;
+		}
+
+		client.disconnect();
+
+		std::cout << ((double)total_upload)/(upload_time * (1 << 20)) << " MBps" << std::endl;
+
+		client.connect();
+		std::cout << "Try to download" << std::endl;
+		message[0] = 'd';
+
+		run = true;
+		size_t download_time = config.get_download_time();
+		if(pthread_create(&thread, NULL, timer_thread, &download_time)) {
+
+			fprintf(stderr, "Error creating thread\n");
+			return;
+		}
+
+		size_t total_download = 0;
+		while (run)
+		{
+			client.send(message, 1);
+			total_download += client.receive(buffer, BUF_SIZE);
+		}
+
+		if(pthread_join(thread, NULL)) {
+
+			fprintf(stderr, "Error joining thread\n");
+			return;
+		}
+
+		client.disconnect();
+		std::cout << ((double)total_download)/(download_time * (1 << 20)) << " MBps" << std::endl;
 	}
-
-	if(pthread_join(thread, NULL)) {
-
-		fprintf(stderr, "Error joining thread\n");
-		return;
-	}
-
-	client.disconnect();
-
-	std::cout << ((double)total_upload)/(upload_time * (1 << 20)) << " MBps" << std::endl;
-
-	client.connect();
-	std::cout << "Try to download" << std::endl;
-	message[0] = 'd';
-
-	run = true;
-	size_t download_time = config.get_download_time();
-	if(pthread_create(&thread, NULL, timer_thread, &download_time)) {
-
-		fprintf(stderr, "Error creating thread\n");
-		return;
-	}
-
-	size_t total_download = 0;
-	while (run)
+	else
 	{
-		client.send(message, 1);
-		total_download += client.receive(buffer, BUF_SIZE);
+		std::cout << "PROTOCOL " << config.get_protocol() << " is not implemented!" << std::endl;
 	}
-
-	if(pthread_join(thread, NULL)) {
-
-		fprintf(stderr, "Error joining thread\n");
-		return;
-	}
-
-	client.disconnect();
-	std::cout << ((double)total_download)/(download_time * (1 << 20)) << " MBps" << std::endl;
 }
 int main(int argc, const char* argv[]){
 	if (argc != 2)
