@@ -136,7 +136,7 @@ public:
 		disconnect();
 	}
 
-	int connect(size_t timeout = 0) override
+	virtual int connect(size_t timeout = 0)
 	{
 		if (is_connected)
 			return -1;
@@ -275,7 +275,7 @@ public:
 		return received;
 	}
 
-	int disconnect() override
+	virtual int disconnect()
 	{
 		if (!is_connected)
 			return -1;
@@ -329,8 +329,6 @@ void client(std::string config_file)
 		char buffer[BUF_SIZE];
 		tcp_client client(config.get_ip(), config.get_port());
 		client.connect(config.get_timeout());
-		//client.disconnect();
-		//client.connect();
 
 		std::cout << "Try to upload" << std::endl;
 		memset(message, 'a', sizeof (message));

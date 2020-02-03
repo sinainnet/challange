@@ -7,10 +7,10 @@ static constexpr std::size_t DEFUALT_WAIT = 5;	// Near the maximum
 class communication
 {
 public:
-	virtual int connect() = 0;
+	//virtual int connect(size_t) = 0;
 	virtual int send(char*, size_t) = 0;
 	virtual int receive(char*, size_t) = 0;
-	virtual int disconnect() = 0;
+	//virtual int disconnect() = 0;
 };
 
 #endif
