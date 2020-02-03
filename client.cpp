@@ -136,7 +136,7 @@ public:
 		disconnect();
 	}
 
-	int connect() override
+	int connect(size_t timeout = 0) override
 	{
 		if (is_connected)
 			return -1;
@@ -148,16 +148,105 @@ public:
 		serverAddr.sin_addr.s_addr = inet_addr(serverIpv4.c_str());
 		memset(serverAddr.sin_zero, '\0', sizeof serverAddr.sin_zero);
 		addr_size = sizeof serverAddr;
-		std::cout << "Connecting" << std::endl;
-		if (::connect(clientSocket, (struct sockaddr *) &serverAddr, addr_size) < 0)
-		{
-			std::cout << "Connect failed" << std::endl;
-			return -1;
-		}
 
-		std::cout << "Connected" << std::endl;
-		is_connected = true;
-		return 0;
+		if (timeout == 0)
+		{
+			if (::connect(clientSocket, (struct sockaddr *) &serverAddr, addr_size) < 0)
+			{
+				std::cout << "Connect failed" << std::endl;
+				return -1;
+			}
+
+			is_connected = true;
+			return 0;
+		}
+		else
+		{
+			int res;
+			long arg;
+			fd_set myset;
+			struct timeval tv;
+			int valopt;
+			socklen_t lon;
+
+			// Set non-blocking
+			if( (arg = fcntl(clientSocket, F_GETFL, NULL)) < 0)
+			{
+				fprintf(stderr, "Error fcntl(..., F_GETFL) (%s)\n", strerror(errno));
+				exit(0);
+			}
+			arg |= O_NONBLOCK;
+			if( fcntl(clientSocket, F_SETFL, arg) < 0)
+			{
+				fprintf(stderr, "Error fcntl(..., F_SETFL) (%s)\n", strerror(errno));
+				exit(0);
+			}
+
+			// Trying to connect with timeout
+			res = ::connect(clientSocket, (struct sockaddr *)&serverAddr, addr_size);
+			if (res < 0)
+			{
+				if (errno == EINPROGRESS)
+				{
+					fprintf(stderr, "EINPROGRESS in connect() - selecting\n");
+					do
+					{
+						tv.tv_sec = timeout;
+						tv.tv_usec = 0;
+						FD_ZERO(&myset);
+						FD_SET(clientSocket, &myset);
+						res = select(clientSocket+1, NULL, &myset, NULL, &tv);
+						if (res < 0 && errno != EINTR)
+						{
+							fprintf(stderr, "Error connecting %d - %s\n", errno, strerror(errno));
+							exit(0);
+						}
+						else if (res > 0)
+						{
+							// Socket selected for write
+							lon = sizeof(int);
+							if (getsockopt(clientSocket, SOL_SOCKET, SO_ERROR, (void*)(&valopt), &lon) < 0)
+							{
+								fprintf(stderr, "Error in getsockopt() %d - %s\n", errno, strerror(errno));
+								exit(0);
+							}
+							// Check the value returned...
+							if (valopt)
+							{
+								fprintf(stderr, "Error in delayed connection() %d - %s\n", valopt, strerror(valopt));
+								exit(0);
+							}
+
+							break;
+						}
+						else
+						{
+							fprintf(stderr, "Timeout in select() - Cancelling!\n");
+							exit(0);
+						}
+					} while (1);
+				}
+				else
+				{
+					fprintf(stderr, "Error connecting %d - %s\n", errno, strerror(errno));
+					exit(0);
+				}
+			}
+			// Set to blocking mode again...
+			if( (arg = fcntl(clientSocket, F_GETFL, NULL)) < 0) 
+			{
+				fprintf(stderr, "Error fcntl(..., F_GETFL) (%s)\n", strerror(errno));
+				exit(0);
+			}
+			arg &= (~O_NONBLOCK);
+			if( fcntl(clientSocket, F_SETFL, arg) < 0)
+			{
+				fprintf(stderr, "Error fcntl(..., F_SETFL) (%s)\n", strerror(errno));
+				exit(0);
+			}
+			is_connected = true;
+			return 0;
+		}
 	}
 
 	int send(char* buf, size_t n) override
@@ -231,15 +320,17 @@ void client(std::string config_file)
 {
 	client_config config(config_file);
 	config.configure();
-	std::cout << config.get_protocol() << "\n" << config.get_ip() << "\n" << config.get_port() << "\n" << config.get_timeout() << std::endl;
-	std::cout << config.get_download_time() << "\n" << config.get_upload_time() << std::endl;
+	//std::cout << config.get_protocol() << "\n" << config.get_ip() << "\n" << config.get_port() << "\n" << config.get_timeout() << std::endl;
+	//std::cout << config.get_download_time() << "\n" << config.get_upload_time() << std::endl;
 
 	if (config.get_protocol() == client_config::TCP)
 	{
 		char message[BUF_SIZE];
 		char buffer[BUF_SIZE];
 		tcp_client client(config.get_ip(), config.get_port());
-		client.connect();
+		client.connect(config.get_timeout());
+		//client.disconnect();
+		//client.connect();
 
 		std::cout << "Try to upload" << std::endl;
 		memset(message, 'a', sizeof (message));
@@ -271,7 +362,7 @@ void client(std::string config_file)
 
 		client.disconnect();
 
-		std::cout << ((double)total_upload)/(upload_time * (1 << 20)) << " MBps" << std::endl;
+		std::cout << "Upload " << ((double)total_upload)/(upload_time * (1 << 20)) << " MBps" << "(for " << upload_time << " seconds)" << std::endl;
 
 		client.connect();
 		std::cout << "Try to download" << std::endl;
@@ -299,7 +390,7 @@ void client(std::string config_file)
 		}
 
 		client.disconnect();
-		std::cout << ((double)total_download)/(download_time * (1 << 20)) << " MBps" << std::endl;
+		std::cout << "Download " << ((double)total_download)/(download_time * (1 << 20)) << " MBps" << "(for " << download_time << " seconds)" << std::endl;
 	}
 	else
 	{
