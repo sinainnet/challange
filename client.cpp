@@ -11,17 +11,101 @@
 #include <stdlib.h>
 #include <fcntl.h> // for open
 #include <unistd.h> // for close
-#include<pthread.h>
+#include <pthread.h>
 #include "./common.h"
 
-class tcp_client : server
-{};
+class tcp_client : communication
+{
+public:
+	tcp_client(std::string ipv4, int port)
+	: clientPort(port)
+	, serverIpv4(ipv4)
+	, is_connected(false)
+	{
+	}
+
+	~tcp_client()
+	{
+		disconnect();
+	}
+
+	int connect() override
+	{
+		if (is_connected)
+			return -1;
+
+		// TCP related socket: SOCK_STREAM
+		clientSocket = socket(PF_INET, SOCK_STREAM, 0);
+		serverAddr.sin_family = AF_INET;
+		serverAddr.sin_port = htons(clientPort);
+		serverAddr.sin_addr.s_addr = inet_addr(serverIpv4.c_str());
+		memset(serverAddr.sin_zero, '\0', sizeof serverAddr.sin_zero);
+		addr_size = sizeof serverAddr;
+		std::cout << "Connecting" << std::endl;
+		if (::connect(clientSocket, (struct sockaddr *) &serverAddr, addr_size) < 0)
+		{
+			std::cout << "Connect failed" << std::endl;
+			return -1;
+		}
+
+		std::cout << "Connected" << std::endl;
+		is_connected = true;
+		return 0;
+	}
+
+	int send(char* buf, size_t n) override
+	{
+		if (!is_connected)
+			return -1;
+
+		int sent = ::send(clientSocket , buf , n , 0);
+		if (sent < 0)
+		{
+			std::cout << "Send failed" << std::endl;
+		}
+		return sent;
+	}
+
+	int receive(char* buf, size_t n) override
+	{
+		if (!is_connected)
+			return -1;
+
+		int received = ::recv(clientSocket, buf, n, 0);
+		if (received < 0)
+		{
+			std::cout << "Receive failed" << std::endl;
+		}
+		return received;
+	}
+
+	int disconnect() override
+	{
+		if (!is_connected)
+			return -1;
+
+		int res = close(clientSocket);
+		if (res < 0)
+		{
+			std::cout << "Close socket failed" << std::endl;
+		}
+		is_connected = false;
+	}
+
+private:
+	int clientPort;
+	std::string serverIpv4;
+	bool is_connected;
+	int clientSocket;
+	struct sockaddr_in serverAddr;
+	socklen_t addr_size;
+};
 
 bool run = true;
 
 void clock_tick(const boost::system::error_code& /*e*/)
 {
-	std::cout << "Hello, world!" << std::endl;
+	std::cout << "time tick!" << std::endl;
 	run = false;
 }
 
@@ -39,26 +123,11 @@ void client()
 {
 	printf("In thread\n");
 	char message[32000];
-	char buffer[34000];
-	int clientSocket;
-	struct sockaddr_in serverAddr;
-	socklen_t addr_size;
-	// Create the socket.
-	clientSocket = socket(PF_INET, SOCK_STREAM, 0);
-	//Configure settings of the server address
-	// Address family is Internet
-	serverAddr.sin_family = AF_INET;
-	//Set port number, using htons function
-	serverAddr.sin_port = htons(8000);
-	//Set IP address to localhost
-	serverAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
-	memset(serverAddr.sin_zero, '\0', sizeof serverAddr.sin_zero);
-	//Connect the socket to the server using the address
-	addr_size = sizeof serverAddr;
-	connect(clientSocket, (struct sockaddr *) &serverAddr, addr_size);
-	//strcpy(message,"Hello");
+	char buffer[32000];
+	tcp_client client("127.0.0.1", 8000);
+	client.connect();
 	memset(message, 'a', sizeof (message));
-	buffer[0] = 'c';
+	message[0] = 'u';
 
 	/* this variable is our reference to the second thread */
 	pthread_t thread;
@@ -70,17 +139,10 @@ void client()
 		return;
 	}
 
-	while (buffer[0] == 'c' && run)
+	while (run)
 	{
-		if( send(clientSocket , message , strlen(message) , 0) < 0)
-		{
-			printf("Send failed\n");
-		}
-		//Read the message from the server into the buffer
-		if(recv(clientSocket, buffer, 34000, 0) < 0)
-		{
-			printf("Receive failed\n");
-		}
+		client.send(message, 32000);
+		client.receive(buffer, 1);
 	}
 
 	if(pthread_join(thread, NULL)) {
@@ -89,41 +151,22 @@ void client()
 		return;
 	}
 
-	{
-		message[0] = 'e';
-		if( send(clientSocket , message , strlen(message) , 0) < 0)
-		{
-			printf("Send failed\n");
-		}
-		//Read the message from the server into the buffer
-		if(recv(clientSocket, buffer, 34000, 0) < 0)
-		{
-			printf("Receive failed\n");
-		}
-	}
-	//Print the received message
-	//printf("Data received: %s\n",buffer);
-	if (buffer[0] == 'd')
-		std::cout << buffer << std::endl;
+	client.disconnect();
 
-	message[0] = 'u';
+	client.connect();
+	message[0] = 'd';
 
+	run = true;
 	if(pthread_create(&thread, NULL, timer_thread, NULL)) {
 
 		fprintf(stderr, "Error creating thread\n");
 		return;
 	}
-	while (buffer[0] == 'f' && run)
+
+	while (run)
 	{
-		if( send(clientSocket , message , strlen(message) , 0) < 0)
-		{
-			printf("Send failed\n");
-		}
-		//Read the message from the server into the buffer
-		if(recv(clientSocket, buffer, 34000, 0) < 0)
-		{
-			printf("Receive failed\n");
-		}
+		client.send(message, 1);
+		client.receive(buffer, 32000);
 	}
 
 	if(pthread_join(thread, NULL)) {
@@ -132,23 +175,7 @@ void client()
 		return;
 	}
 
-	{
-		message[0] = 'e';
-		if( send(clientSocket , message , strlen(message) , 0) < 0)
-		{
-			printf("Send failed\n");
-		}
-		//Read the message from the server into the buffer
-		if(recv(clientSocket, buffer, 34000, 0) < 0)
-		{
-			printf("Receive failed\n");
-		}
-	}
-
-	if (buffer[0] == 'd')
-		std::cout << buffer << std::endl;
-
-	close(clientSocket);
+	client.disconnect();
 }
 int main(){
 

@@ -1,3 +1,5 @@
+#include <iostream>
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -214,6 +216,8 @@ main (int argc, char *argv[])
 
 				ssize_t count;
 				char buf[32000];
+				char buf2[32000];
+				memset(buf2, 'b', sizeof (buf2));
 
 				while (1)
 				{
@@ -237,23 +241,15 @@ main (int argc, char *argv[])
 						break;
 					}
 
-
 					/* Write the buffer to standard output */
-					s = write (1, buf, count);
-					if (s == -1)
-					{
-						perror ("write");
-						abort ();
-					}
+					std::cout << buf[0] << std::endl;
 				}
 
 
-				if (buf[0] == 'e')
-					strcpy(buf, "d");
-				else
-					strcpy(buf, "c");
-				// Check
-				write (events[i].data.fd, buf, sizeof buf);
+				if (buf[0] == 'u')
+					write (events[i].data.fd, buf, 1);
+				else	// buf[0] == 'd'
+					write (events[i].data.fd, buf2, sizeof buf2);
 
 				if (done)
 				{
