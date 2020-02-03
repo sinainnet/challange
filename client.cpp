@@ -1,7 +1,10 @@
 #include <iostream>
+#include <string>
 #include <boost/array.hpp>
 #include <boost/asio.hpp>
 #include <boost/date_time/posix_time/posix_time.hpp>
+#include <boost/property_tree/ptree.hpp>
+#include <boost/property_tree/ini_parser.hpp>
 
 #include <stdio.h>
 #include <sys/socket.h>
@@ -13,6 +16,110 @@
 #include <unistd.h> // for close
 #include <pthread.h>
 #include "./common.h"
+
+class client_config
+{
+public:
+	enum PROTOCOL
+	{
+		TCP,
+		UDP,
+		UNKNOWN
+	};
+
+	client_config(std::string config_file)
+	: configured(false)
+	, config_file(config_file)
+	{}
+	void configure()
+	{
+		configured = false;
+
+		std::cout << config_file.c_str() << std::endl;
+		boost::property_tree::ptree pt;
+		boost::property_tree::ini_parser::read_ini(config_file.c_str(), pt);
+
+		if (pt.get<std::string>("server.protocol") == "tcp")
+			protocol = TCP;
+		else if (pt.get<std::string>("server.protocol") == "udp")
+			protocol = UDP;
+		else
+			protocol = UNKNOWN;
+
+		std::string full_address = pt.get<std::string>("server.address");
+		std::string delimiter = ":";
+		size_t pos = 0;
+		pos = full_address.find(delimiter);
+		ipv4 = full_address.substr(0, pos);
+		full_address.erase(0, pos + delimiter.length());
+		port = std::stoi(full_address);
+
+		timeout = std::stoi(pt.get<std::string>("server.timeout"));
+
+		download_time = std::stoi(pt.get<std::string>("test.download_time"));
+		upload_time = std::stoi(pt.get<std::string>("test.upload_time"));
+
+		configured = true;
+	}
+
+	PROTOCOL get_protocol()
+	{
+		if (configured)
+			return protocol;
+		else
+			return UNKNOWN;
+	}
+
+	std::string get_ip()
+	{
+		if (configured)
+			return ipv4;
+		else
+			return nullptr;
+	}
+
+	int get_port()
+	{
+		if (configured)
+			return port;
+		else
+			return -1;
+	}
+
+	int get_timeout()
+	{
+		if (configured)
+			return timeout;
+		else
+			return -1;
+	}
+
+	int get_download_time()
+	{
+		if (configured)
+			return download_time;
+		else
+			return -1;
+	}
+
+	int get_upload_time()
+	{
+		if (configured)
+			return upload_time;
+		else
+			return -1;
+	}
+
+private:
+	bool configured;
+	std::string config_file;
+	PROTOCOL protocol;
+	std::string ipv4;
+	int port;
+	int timeout;
+	int download_time;
+	int upload_time;
+};
 
 class tcp_client : communication
 {
@@ -113,35 +220,44 @@ void* timer_thread(void *ptr)
 {
 	boost::asio::io_service clock_io;
 
-	boost::asio::deadline_timer t(clock_io, boost::posix_time::seconds(DEFUALT_WAIT));
+	size_t wait_time = *(size_t*)(ptr);
+	boost::asio::deadline_timer t(clock_io, boost::posix_time::seconds(wait_time));
 	t.async_wait(&clock_tick);
 
 	clock_io.run();
 }
 
-void client()
+void client(std::string config_file)
 {
-	printf("In thread\n");
-	char message[32000];
-	char buffer[32000];
-	tcp_client client("127.0.0.1", 8000);
+	client_config config(config_file);
+	config.configure();
+	std::cout << config.get_protocol() << "\n" << config.get_ip() << "\n" << config.get_port() << "\n" << config.get_timeout() << std::endl;
+	std::cout << config.get_download_time() << "\n" << config.get_upload_time() << std::endl;
+
+	char message[BUF_SIZE];
+	char buffer[BUF_SIZE];
+	tcp_client client(config.get_ip(), config.get_port());
 	client.connect();
+
+	std::cout << "Try to upload" << std::endl;
 	memset(message, 'a', sizeof (message));
 	message[0] = 'u';
 
 	/* this variable is our reference to the second thread */
 	pthread_t thread;
 
+	size_t upload_time = config.get_upload_time();
 	/* create a second thread which executes inc_x(&x) */
-	if(pthread_create(&thread, NULL, timer_thread, NULL)) {
+	if(pthread_create(&thread, NULL, timer_thread, &upload_time)) {
 
 		fprintf(stderr, "Error creating thread\n");
 		return;
 	}
 
+	size_t total_upload = 0;
 	while (run)
 	{
-		client.send(message, 32000);
+		total_upload += client.send(message, BUF_SIZE);
 		client.receive(buffer, 1);
 	}
 
@@ -153,20 +269,25 @@ void client()
 
 	client.disconnect();
 
+	std::cout << ((double)total_upload)/(upload_time * (1 << 20)) << " MBps" << std::endl;
+
 	client.connect();
+	std::cout << "Try to download" << std::endl;
 	message[0] = 'd';
 
 	run = true;
-	if(pthread_create(&thread, NULL, timer_thread, NULL)) {
+	size_t download_time = config.get_download_time();
+	if(pthread_create(&thread, NULL, timer_thread, &download_time)) {
 
 		fprintf(stderr, "Error creating thread\n");
 		return;
 	}
 
+	size_t total_download = 0;
 	while (run)
 	{
 		client.send(message, 1);
-		client.receive(buffer, 32000);
+		total_download += client.receive(buffer, BUF_SIZE);
 	}
 
 	if(pthread_join(thread, NULL)) {
@@ -176,9 +297,12 @@ void client()
 	}
 
 	client.disconnect();
+	std::cout << ((double)total_download)/(download_time * (1 << 20)) << " MBps" << std::endl;
 }
-int main(){
+int main(int argc, const char* argv[]){
+	if (argc != 2)
+		exit(1);
 
-	client();
+	client(argv[1]);
 	return 0;
 }
