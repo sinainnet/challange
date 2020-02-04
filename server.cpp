@@ -248,6 +248,8 @@ public:
 								NI_NUMERICHOST | NI_NUMERICSERV);
 						if (s == 0)
 						{
+							std::time_t now_time = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+							std::cout << std::ctime(&now_time) << std::endl;
 							printf("Accepted connection on descriptor %d "
 									"(host=%s, port=%s)\n", infd, hbuf, sbuf);
 						}
