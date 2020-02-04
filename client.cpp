@@ -35,7 +35,6 @@ public:
 	{
 		configured = false;
 
-		std::cout << config_file.c_str() << std::endl;
 		boost::property_tree::ptree pt;
 		boost::property_tree::ini_parser::read_ini(config_file.c_str(), pt);
 

@@ -1,5 +1,7 @@
 #include <iostream>
 #include <unordered_map>
+#include <boost/property_tree/ptree.hpp>
+#include <boost/property_tree/ini_parser.hpp>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,17 +13,97 @@
 #include <fcntl.h>
 #include <sys/epoll.h>
 #include <errno.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 
 #include "./common.h"
 
 #define MAXEVENTS 64
 
+class server_config
+{
+public:
+	enum PROTOCOL
+	{
+		TCP,
+		UDP,
+		UNKNOWN
+	};
+
+	server_config(std::string config_file)
+	: configured(false)
+	, config_file(config_file)
+	{}
+	void configure()
+	{
+		configured = false;
+
+		boost::property_tree::ptree pt;
+		boost::property_tree::ini_parser::read_ini(config_file.c_str(), pt);
+
+		if (pt.get<std::string>("server.protocol") == "tcp")
+			protocol = TCP;
+		else if (pt.get<std::string>("server.protocol") == "udp")
+			protocol = UDP;
+		else
+			protocol = UNKNOWN;
+
+		ipv4 = pt.get<std::string>("server.ip");
+		port = std::stoi(pt.get<std::string>("server.port"));
+
+		timeout = std::stoi(pt.get<std::string>("server.timeout"));
+
+		configured = true;
+	}
+
+	PROTOCOL get_protocol()
+	{
+		if (configured)
+			return protocol;
+		else
+			return UNKNOWN;
+	}
+
+	std::string get_ip()
+	{
+		if (configured)
+			return ipv4;
+		else
+			return nullptr;
+	}
+
+	int get_port()
+	{
+		if (configured)
+			return port;
+		else
+			return -1;
+	}
+
+	int get_timeout()
+	{
+		if (configured)
+			return timeout;
+		else
+			return -1;
+	}
+
+private:
+	bool configured;
+	std::string config_file;
+	PROTOCOL protocol;
+	std::string ipv4;
+	int port;
+	int timeout;
+};
 class tcp_server : communication
 {
 public:
-	tcp_server(const std::string& port)
+	tcp_server(const std::string& ip, int port, size_t timeout)
 	: is_running(false)
+	, ipv4(ip)
 	, port(port)
+	, timeout(timeout)
 	{
 		memset(buf, '\0', sizeof (buf));
 		memset(buf2, 'b', sizeof (buf2));
@@ -32,13 +114,35 @@ public:
 		stop();
 	}
 
+	static int make_socket_non_blocking(int sfd)
+	{
+		int flags, s;
+
+		flags = fcntl (sfd, F_GETFL, 0);
+		if (flags == -1)
+		{
+			perror ("fcntl");
+			return -1;
+		}
+
+		flags |= O_NONBLOCK;
+		s = fcntl (sfd, F_SETFL, flags);
+		if (s == -1)
+		{
+			perror ("fcntl");
+			return -1;
+		}
+
+		return 0;
+	}
+
 	virtual int init_server()
 	{
 		sfd = create_and_bind();
 		if (sfd == -1)
 			abort ();
 
-		s = make_socket_non_blocking(sfd);
+		s = tcp_server::make_socket_non_blocking(sfd);
 		if (s == -1)
 			abort ();
 	}
@@ -52,7 +156,7 @@ public:
 			abort ();
 		}
 
-		efd = epoll_create1 (0);
+		efd = epoll_create1(0);
 		if (efd == -1)
 		{
 			perror ("epoll_create");
@@ -133,7 +237,7 @@ public:
 
 						/* Make the incoming socket non-blocking and add it to the
 						   list of fds to monitor. */
-						s = make_socket_non_blocking (infd);
+						s = tcp_server::make_socket_non_blocking (infd);
 						if (s == -1)
 							abort ();
 
@@ -222,78 +326,32 @@ public:
 
 private:
 
-	int create_and_bind ()
+	int create_and_bind()
 	{
-		struct addrinfo hints;
-		struct addrinfo *result, *rp;
-		int s, sfd;
+		int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+		if (sockfd == -1)
+			exit(1);
 
-		memset (&hints, 0, sizeof (struct addrinfo));
-		hints.ai_family = AF_UNSPEC;     /* Return IPv4 and IPv6 choices */
-		hints.ai_socktype = SOCK_STREAM; /* We want a TCP socket */
-		hints.ai_flags = AI_PASSIVE;     /* All interfaces */
-
-		s = getaddrinfo (NULL, port.c_str(), &hints, &result);
+		struct sockaddr_in localaddr;
+		localaddr.sin_family = AF_INET;
+		localaddr.sin_addr.s_addr = inet_addr(ipv4.c_str());
+		localaddr.sin_port = htons(port);
+		int s = bind(sockfd, (struct sockaddr *)&localaddr, sizeof(localaddr));
 		if (s != 0)
 		{
-			fprintf (stderr, "getaddrinfo: %s\n", gai_strerror (s));
-			return -1;
+			close(sockfd);
+			exit(1);
 		}
-
-		for (rp = result; rp != NULL; rp = rp->ai_next)
-		{
-			sfd = socket (rp->ai_family, rp->ai_socktype, rp->ai_protocol);
-			if (sfd == -1)
-				continue;
-
-			s = bind (sfd, rp->ai_addr, rp->ai_addrlen);
-			if (s == 0)
-			{
-				/* We managed to bind successfully! */
-				break;
-			}
-
-			close (sfd);
-		}
-
-		if (rp == NULL)
-		{
-			fprintf (stderr, "Could not bind\n");
-			return -1;
-		}
-
-		freeaddrinfo (result);
-
-		return sfd;
-	}
-
-	int make_socket_non_blocking(int sfd)
-	{
-		int flags, s;
-
-		flags = fcntl (sfd, F_GETFL, 0);
-		if (flags == -1)
-		{
-			perror ("fcntl");
-			return -1;
-		}
-
-		flags |= O_NONBLOCK;
-		s = fcntl (sfd, F_SETFL, flags);
-		if (s == -1)
-		{
-			perror ("fcntl");
-			return -1;
-		}
-
-		return 0;
+		return sockfd;
 	}
 
 	/* buffer for communication */
 	char buf[BUF_SIZE];
 	char buf2[BUF_SIZE];
 	bool is_running;
-	std::string port;
+	std::string ipv4;
+	int port;
+	size_t timeout;
 	int sfd, s;
 	int efd;
 	std::unordered_map<int, size_t> client_timeout_list;
@@ -305,13 +363,22 @@ int main (int argc, char *argv[])
 {
 	if (argc != 2)
 	{
-		fprintf (stderr, "Usage: %s [port]\n", argv[0]);
+		fprintf (stderr, "Usage: %s [config file]\n", argv[0]);
 		exit (EXIT_FAILURE);
 	}
 
-	tcp_server server(argv[1]);
-	server.init_server();
-	server.start();
-	server.stop();
+	server_config config(argv[1]);
+	config.configure();
+	if (config.get_protocol() == server_config::TCP)
+	{
+		tcp_server server(config.get_ip(), config.get_port(), config.get_timeout());
+		server.init_server();
+		server.start();
+		server.stop();
+	}
+	else
+	{
+		std::cout << "The requested protocol is not implemented!" << std::endl;
+	}
 	return EXIT_SUCCESS;
 }
