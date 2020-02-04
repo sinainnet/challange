@@ -1,5 +1,7 @@
 #include <iostream>
 #include <unordered_map>
+#include <numeric>
+#include <chrono>
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/ini_parser.hpp>
 
@@ -185,7 +187,22 @@ public:
 		{
 			int n, i;
 
-			n = epoll_wait (efd, events, MAXEVENTS, -1);
+			n = epoll_wait(efd, events, MAXEVENTS, 500);	// epoll timeout is based on miliseconds
+			if (n == 0)	// Remove timeouted clients.
+			{
+				auto now = std::chrono::system_clock::now();
+				for (auto element : client_timeout_list)
+				{
+					std::chrono::duration<double> elapsed_seconds = now - element.second;
+					if (elapsed_seconds.count() > timeout)
+					{
+						std::cout << "time out for fd: " << element.first << std::endl;
+						close(element.first);
+						client_timeout_list.erase(element.first);
+					}
+				}
+				continue;
+			}
 			for (i = 0; i < n; i++)
 			{
 				if ((events[i].events & EPOLLERR) || (events[i].events & EPOLLHUP) || (!(events[i].events & EPOLLIN)))
@@ -249,6 +266,8 @@ public:
 							perror ("epoll_ctl");
 							abort ();
 						}
+
+						client_timeout_list[infd] = std::chrono::system_clock::now();
 					}
 					continue;
 				}
@@ -265,6 +284,7 @@ public:
 
 					while (1)
 					{
+						client_timeout_list[events[i].data.fd] = std::chrono::system_clock::now();
 						count = read (events[i].data.fd, buf, sizeof buf);
 						if (count == -1)
 						{
@@ -286,7 +306,7 @@ public:
 						}
 
 						/* Write the buffer to standard output */
-						std::cout << buf[0] << std::endl;
+						//std::cout << buf[0] << std::endl;
 					}
 
 
@@ -300,6 +320,7 @@ public:
 						printf ("Closed connection on descriptor %d\n",
 								events[i].data.fd);
 
+						client_timeout_list.erase(events[i].data.fd);
 						/* Closing the descriptor will make epoll remove it
 						   from the set of descriptors which are monitored. */
 						close (events[i].data.fd);
@@ -354,7 +375,7 @@ private:
 	size_t timeout;
 	int sfd, s;
 	int efd;
-	std::unordered_map<int, size_t> client_timeout_list;
+	std::unordered_map<int, std::chrono::time_point<std::chrono::system_clock>> client_timeout_list;
 	struct epoll_event event;
 	struct epoll_event *events;
 };

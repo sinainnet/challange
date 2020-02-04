@@ -187,7 +187,7 @@ public:
 			{
 				if (errno == EINPROGRESS)
 				{
-					fprintf(stderr, "EINPROGRESS in connect() - selecting\n");
+					//fprintf(stderr, "EINPROGRESS in connect() - selecting\n");
 					do
 					{
 						tv.tv_sec = timeout;
@@ -361,7 +361,8 @@ void client(std::string config_file)
 
 		std::cout << "Upload " << ((double)total_upload)/(upload_time * (1 << 20)) << " MBps" << "(for " << upload_time << " seconds)" << std::endl;
 
-		client.connect();
+
+		client.connect(config.get_timeout());
 		std::cout << "Try to download" << std::endl;
 		message[0] = 'd';
 
